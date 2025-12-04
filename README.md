@@ -1,29 +1,40 @@
 # S3 WebP Uploader
 
-Simple S3 image uploads with automatic WebP conversion for Rails. No Active Storage pollution.
+A Rails gem for uploading images to S3 with automatic WebP conversion and thumbnail generation.
 
 ## Features
 
-- 🖼️ Automatic WebP conversion with libvips
-- 📐 Configurable image sizes (original + thumbnail)
-- 🗂️ Predictable URL structure: `{bucket}/{prefix}/{identifier}/original.webp`
-- 🔢 Multiple images per record with automatic indexing
-- 🚀 No model pollution - use standalone or with minimal helpers
-- ⚡ Simple API
+- **WebP conversion** - Automatically converts images to WebP format
+- **Thumbnails** - Generates original (1200px) and thumbnail (300px) variants
+- **Predictable URLs** - Uses slug-based folder structure for SEO-friendly URLs
+- **Simple API** - Easy to use helper methods for your models
+- **Configurable** - Customize column names, sizes, and S3 settings
 
 ## Installation
 
 Add to your Gemfile:
 
 ```ruby
-gem "s3_webp_uploader", git: "https://github.com/desingh-rajan/s3_webp_uploader"
+gem "s3_webp_uploader", github: "desingh-rajan/s3_webp_uploader"
 ```
 
-Run the installer:
+Run the generator:
 
 ```bash
-bundle install
-rails generate s3_webp_uploader:install
+# For a Product model (default)
+bin/rails generate s3_webp_uploader:install
+
+# For a different model
+bin/rails generate s3_webp_uploader:install Item
+
+# Skip migration if you already have the columns
+bin/rails generate s3_webp_uploader:install --no-migration
+```
+
+Run the migration:
+
+```bash
+bin/rails db:migrate
 ```
 
 ## Configuration
@@ -32,24 +43,33 @@ Edit `config/initializers/s3_webp_uploader.rb`:
 
 ```ruby
 S3WebpUploader.configure do |config|
+  # Required: S3 bucket settings
   config.bucket = "your-bucket-name"
   config.region = "ap-south-1"
+  
+  # Prefix for all uploads
   config.prefix = "my-app/#{Rails.env}/images"
   
-  # Optional - auto-loaded from Rails credentials
-  # config.access_key_id = ENV["AWS_ACCESS_KEY_ID"]
-  # config.secret_access_key = ENV["AWS_SECRET_ACCESS_KEY"]
+  # Custom column names (if different from defaults)
+  config.identifier_attribute = :slug        # Default: :slug
+  config.count_attribute = :image_count      # Default: :image_count
   
-  # Image settings
-  config.original_max_size = 1200    # Max dimension for original
-  config.thumbnail_max_size = 300    # Max dimension for thumbnail
-  config.webp_quality = 85           # WebP quality (1-100)
-  config.acl = "public-read"         # S3 ACL
-  config.variants = [:original, :thumbnail]
+  # Or store count in a JSON column:
+  # config.count_column = :metadata
+  # config.count_attribute = :photos_count   # Key within the JSON
+  
+  # Image settings (optional)
+  config.original_max_size = 1200
+  config.thumbnail_max_size = 300
+  config.webp_quality = 85
 end
 ```
 
-Add AWS credentials to `config/credentials.yml.enc`:
+Add AWS credentials:
+
+```bash
+EDITOR="code --wait" bin/rails credentials:edit
+```
 
 ```yaml
 aws:
@@ -59,116 +79,103 @@ aws:
 
 ## Usage
 
-### Standalone (Recommended - No Model Pollution)
-
-```ruby
-# In controller
-def upload_images
-  @product = Product.find(params[:id])
-  uploader = S3WebpUploader.uploader_for(@product)
-  
-  uploader.upload(params[:image])           # Upload single image
-  uploader.upload_all(params[:images])      # Upload multiple
-  uploader.replace(0, params[:new_image])   # Replace at index
-  uploader.delete(0)                        # Delete at index
-  uploader.delete_all                       # Delete all
-end
-
-# In view
-<% uploader = S3WebpUploader.uploader_for(@product) %>
-<%= image_tag uploader.url(:thumbnail, 0) %>
-<%= image_tag uploader.url(:original, 0) %>
-
-<% uploader.urls(:thumbnail).each do |url| %>
-  <%= image_tag url %>
-<% end %>
-```
-
-### With Custom Identifier
-
-```ruby
-# Use any string as folder name
-uploader = S3WebpUploader.uploader_for(@product, identifier: "custom-folder-name")
-
-# Or use a different attribute
-uploader = S3WebpUploader.uploader_for(@product, identifier: @product.sku)
-```
-
-### Optional Model Helpers
-
-If you prefer convenience methods on the model:
+### Add to Model
 
 ```ruby
 class Product < ApplicationRecord
   include S3WebpUploader::ImageHelpers
-  
-  # Now you can use:
-  # @product.s3_thumbnail_url(0)
-  # @product.s3_original_url(0)
-  # @product.s3_image_urls(:thumbnail)
-  # @product.s3_has_images?
 end
 ```
 
-## URL Structure
+### In Views
 
+```erb
+<% if @product.s3_has_images? %>
+  <%= image_tag @product.s3_thumbnail_url %>
+  
+  <%# Multiple images %>
+  <% @product.s3_image_count.times do |i| %>
+    <%= image_tag @product.s3_thumbnail_url(i) %>
+  <% end %>
+<% end %>
 ```
-https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{identifier}/original.webp
-https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{identifier}/thumbnail.webp
 
-# Multiple images
-https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{identifier}/original_1.webp
-https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{identifier}/thumbnail_1.webp
-```
-
-## Image Count Storage
-
-The gem expects your model to store image count in one of these ways:
+### Upload in Controller
 
 ```ruby
-# Option 1: image_count column
-add_column :products, :image_count, :integer, default: 0
+def upload_images
+  uploader = @product.s3_image_uploader
+  uploader.upload_all(params[:images])
+  redirect_to @product
+end
 
-# Option 2: JSON specifications column (what vega-tools uses)
-# Stores as: { "image_count" => 3, ... }
-add_column :products, :specifications, :json, default: {}
+def delete_image
+  @product.s3_image_uploader.delete(params[:index].to_i)
+  redirect_to @product
+end
 ```
 
-## S3 Bucket Setup
+### Direct Uploader Access
 
-1. Create bucket with public access enabled
-2. Add bucket policy:
+```ruby
+# Get uploader for a record
+uploader = S3WebpUploader.uploader_for(@product)
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Sid": "PublicRead",
-    "Effect": "Allow",
-    "Principal": "*",
-    "Action": "s3:GetObject",
-    "Resource": "arn:aws:s3:::your-bucket/your-app/*"
-  }]
-}
+# Upload
+uploader.upload(file)           # Returns index
+uploader.upload_all(files)      # Returns array of indices
+
+# Delete
+uploader.delete(0)              # Delete by index
+uploader.delete_all             # Delete all images
+
+# Replace
+uploader.replace(0, new_file)   # Replace image at index
+
+# URLs
+uploader.url(:thumbnail, 0)     # Get URL
+uploader.urls(:original)        # Get all URLs for variant
+
+# Info
+uploader.count                  # Number of images
+uploader.exists?(0)             # Check if image exists
+```
+
+## Helper Methods
+
+When you include `S3WebpUploader::ImageHelpers`:
+
+| Method | Description |
+|--------|-------------|
+| `s3_image_uploader` | Get uploader instance |
+| `s3_thumbnail_url(index = 0)` | Thumbnail URL |
+| `s3_original_url(index = 0)` | Original URL |
+| `s3_image_count` | Number of images |
+| `s3_has_images?` | Check if any images |
+| `s3_all_thumbnail_urls` | Array of all thumbnail URLs |
+| `s3_all_original_urls` | Array of all original URLs |
+
+## S3 URL Pattern
+
+```
+https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{slug}/original.webp
+https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{slug}/thumbnail.webp
+https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{slug}/original_1.webp
+https://{bucket}.s3.{region}.amazonaws.com/{prefix}/{slug}/thumbnail_1.webp
 ```
 
 ## Requirements
 
-- Ruby >= 3.0
-- Rails >= 7.0
-- libvips (for WebP conversion)
+- Ruby 3.0+
+- Rails 7.0+
+- libvips (for image processing)
+- AWS S3 bucket with public read access
 
-### Installing libvips
+### Dockerfile
 
-```bash
-# macOS
-brew install vips
-
-# Ubuntu/Debian
-apt-get install libvips
-
-# Dockerfile
-RUN apt-get install --no-install-recommends -y libvips
+```dockerfile
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y libvips
 ```
 
 ## License

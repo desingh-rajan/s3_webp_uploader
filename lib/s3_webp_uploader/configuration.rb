@@ -2,7 +2,7 @@ module S3WebpUploader
   class Configuration
     attr_accessor :bucket, :region, :prefix, :access_key_id, :secret_access_key,
                   :original_max_size, :thumbnail_max_size, :webp_quality,
-                  :acl, :variants
+                  :acl, :variants, :identifier_attribute, :count_attribute, :count_column
 
     def initialize
       @bucket = ENV.fetch("S3_BUCKET", nil)
@@ -15,6 +15,11 @@ module S3WebpUploader
       @webp_quality = 85
       @acl = "public-read"
       @variants = [:original, :thumbnail]
+      
+      # Customizable attribute names
+      @identifier_attribute = :slug        # Used for S3 folder name
+      @count_attribute = :image_count      # Column or JSON key for count
+      @count_column = nil                  # If set, uses this JSON column with count_attribute as key
     end
 
     def credentials

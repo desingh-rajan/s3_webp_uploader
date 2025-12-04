@@ -91,16 +91,25 @@ module S3WebpUploader
 
     def extract_identifier(record)
       return record if record.is_a?(String)
-      record.try(:slug) || record.try(:to_param) || record.try(:id)&.to_s
+      
+      id_attr = config.identifier_attribute
+      record.try(id_attr) || record.try(:to_param) || record.try(:id)&.to_s
     end
 
     def current_count
       return 0 unless record.respond_to?(:read_attribute)
 
-      # Use read_attribute to avoid infinite loops with alias methods
-      if record.class.column_names.include?("image_count")
-        record.read_attribute(:image_count) || 0
-      elsif record.respond_to?(:specifications)
+      count_attr = config.count_attribute.to_s
+      json_column = config.count_column&.to_s
+
+      # If count_column is set, look in that JSON column
+      if json_column && record.class.column_names.include?(json_column)
+        record.read_attribute(json_column)&.dig(count_attr) || 0
+      # Otherwise, try the count_attribute as a direct column
+      elsif record.class.column_names.include?(count_attr)
+        record.read_attribute(count_attr) || 0
+      # Fallback: try specifications column (backward compatibility)
+      elsif record.class.column_names.include?("specifications")
         record.read_attribute(:specifications)&.dig("image_count") || 0
       else
         0
@@ -110,10 +119,20 @@ module S3WebpUploader
     def update_count(count)
       return unless record.respond_to?(:update_columns)
 
-      if record.respond_to?(:image_count)
-        record.update_columns(image_count: count, updated_at: Time.current)
-      elsif record.respond_to?(:specifications)
-        specs = record.specifications || {}
+      count_attr = config.count_attribute.to_s
+      json_column = config.count_column&.to_s
+
+      # If count_column is set, update within that JSON column
+      if json_column && record.class.column_names.include?(json_column)
+        data = record.read_attribute(json_column) || {}
+        data[count_attr] = count
+        record.update_columns(json_column.to_sym => data, updated_at: Time.current)
+      # Otherwise, update the count_attribute column directly
+      elsif record.class.column_names.include?(count_attr)
+        record.update_columns(count_attr.to_sym => count, updated_at: Time.current)
+      # Fallback: try specifications column
+      elsif record.class.column_names.include?("specifications")
+        specs = record.read_attribute(:specifications) || {}
         specs["image_count"] = count
         record.update_columns(specifications: specs, updated_at: Time.current)
       end

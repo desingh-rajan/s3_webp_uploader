@@ -1,0 +1,16 @@
+class AddS3ImageColumnsTo<%= model_class_name.pluralize %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    # Slug is used as the S3 folder name for images
+    # Skip if your table already has a slug column
+    unless column_exists?(:<%= table_name %>, :slug)
+      add_column :<%= table_name %>, :slug, :string
+      add_index :<%= table_name %>, :slug, unique: true
+    end
+
+    # Image count tracks the number of uploaded images
+    # Skip if your table already has an image_count column
+    unless column_exists?(:<%= table_name %>, :image_count)
+      add_column :<%= table_name %>, :image_count, :integer, default: 0, null: false
+    end
+  end
+end
