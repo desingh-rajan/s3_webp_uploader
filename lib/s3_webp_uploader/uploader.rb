@@ -4,8 +4,8 @@ module S3WebpUploader
 
     def initialize(record, identifier: nil)
       @record = record
-      @identifier = identifier || extract_identifier(record)
       @config = S3WebpUploader.configuration
+      @identifier = identifier || extract_identifier(record)
       validate!
     end
 
