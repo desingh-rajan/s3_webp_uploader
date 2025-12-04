@@ -97,10 +97,11 @@ module S3WebpUploader
     def current_count
       return 0 unless record.respond_to?(:read_attribute)
 
-      if record.respond_to?(:image_count)
-        record.image_count || 0
+      # Use read_attribute to avoid infinite loops with alias methods
+      if record.class.column_names.include?("image_count")
+        record.read_attribute(:image_count) || 0
       elsif record.respond_to?(:specifications)
-        record.specifications&.dig("image_count") || 0
+        record.read_attribute(:specifications)&.dig("image_count") || 0
       else
         0
       end
